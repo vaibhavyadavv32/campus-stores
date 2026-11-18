@@ -369,3 +369,8 @@ body > main {
     min-height: 44px;
   }
 }
+
+#campus-stores .tag.warn { background: #fde8e4; color: #8a1f11; border-color: #f0b8ae; }
+#campus-stores .stack { display: grid; gap: 0.4rem; justify-items: end; }
+#campus-stores .inline { display: grid; gap: 0.4rem; justify-items: start; }
+#campus-stores .inline label { display: grid; gap: 0.2rem; }

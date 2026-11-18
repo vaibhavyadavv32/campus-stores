@@ -1,5 +1,5 @@
 (() => {
-  const storageKey = "campus-stores.shift.v1";
+  const storageKey = "campus-stores.shift.v2";
   const root = document.getElementById("campus-stores");
   const q = (selector) => root.querySelector(selector);
   const requests = [
@@ -90,7 +90,7 @@
     ["Desk book", "messages-square"],
   ];
   const original = () => ({
-    version: 1,
+    version: 2,
     tab: "Requests",
     phase: 0,
     selected: "",
@@ -107,6 +107,9 @@
     ],
     notes: [],
     editing: false,
+    returning: 0,
+    custody: 0,
+    kit: "",
     onlyOpen: true,
     notice: "Sample shift · All records are fictional.",
   });
@@ -156,42 +159,74 @@
     "</small></div><div>" +
     right +
     "</div></div>";
-  const badge = (t, good = false) =>
-    '<span class="tag' + (good ? " good" : "") + '">' + esc(t) + "</span>";
-  function requestPage() {
-    let html = head(
-      "Approved requests",
-      "Student Activities Office · 3 approved forms",
+  const badge = (t, good = false, warn = false) =>
+    '<span class="tag' + (good ? " good" : "") + (warn ? " warn" : "") + '">' + esc(t) + "</span>";
+  const dues = ["Fri 8 pm", "Sat 9 am", "Sat 10 am", "Sat noon"];
+  const rank = { "Fri 8 pm": 20, "Sat 9 am": 33, "Sat 10 am": 34, "Sat noon": 36 };
+  const clock = [15.75, 19.5, 33];
+  const overdue = (l) => !l.back && clock[s.phase] > rank[l.due];
+  const late = (l) => (overdue(l) ? badge("Overdue since " + l.due, false, true) : "");
+  const holderOf = (l) => l.holder || l.who;
+  const loanSub = (l) =>
+    l.req + " · Collected by " + l.who +
+    (l.holder && l.holder !== l.who ? " · Now with " + l.holder : "") +
+    " · Due " + l.due + (l.expected ? " · Expected " + l.expected : "") +
+    (l.note ? " · " + l.note : "");
+  const returnUI = (l) =>
+    s.returning === l.num
+      ? '<form data-return="' + l.num + '" class="inline"><label><span>Label on the unit in hand</span><input name="label" required autocomplete="off" placeholder="' + esc(l.asset) + '"></label><button type="submit" class="primary">Confirm return</button>' + btn("Cancel", "cancelreturn") + "</form>"
+      : btn("Record return", "return", String(l.num));
+  const custodyForm = (l) =>
+    '<form data-custody="' + l.num + '" class="inline"><label><span>Now with</span><select name="holder">' +
+    people.map((p) => "<option" + (p === holderOf(l) ? " selected" : "") + ">" + esc(p) + "</option>").join("") +
+    '</select></label><label><span>Expected back</span><select name="expected"><option value="">No time given</option>' +
+    dues.map((d) => "<option" + (d === l.expected ? " selected" : "") + ">" + d + "</option>").join("") +
+    '</select></label><label><span>Note</span><input name="note" maxlength="120" value="' + esc(l.note || "") + '"></label><button type="submit" class="primary">Save</button>' +
+    btn("Cancel", "cancelcustody") + "</form>";
+  const loanActions = (l) =>
+    '<div class="stack">' + late(l) +
+    (s.custody === l.num ? custodyForm(l) : returnUI(l) + (s.returning === l.num ? "" : btn("Update holder", "custody", String(l.num)))) +
+    "</div>";
+  const lines = (r) =>
+    r.items.map((type) => ({
+      type,
+      loan: s.loans.filter((l) => l.req === r.id && getAsset(l.asset).type === type).pop(),
+    }));
+  const kitForm = (r, ls) => {
+    const todo = ls.filter((x) => !x.loan);
+    return (
+      '<form data-kit="' + r.id + '"><div class="form"><label><span>Collected by</span><select name="who" required><option value="">Select…</option>' +
+      opts(people.map((p) => [p, p])) + '</select></label><label><span>Return by</span><select name="due">' +
+      dues.map((d) => "<option" + (d === r.due ? " selected" : "") + ">" + d + "</option>").join("") + "</select></label>" +
+      todo.map(({ type }) =>
+        "<label><span>" + esc(type) + '</span><select name="u:' + esc(type) + '" required><option value="">Select unit…</option>' +
+        opts(assets.filter((a) => a.type === type && !a.repair && !out(a.id)).map((a) => [a.id, a.id + " · " + a.model + " · bin " + a.bin])) +
+        "</select></label>").join("") +
+      '</div><button type="submit" class="primary">Issue ' + todo.length + " unit" + (todo.length > 1 ? "s" : "") + "</button>" +
+      btn("Cancel", "cancelkit") + "</form>"
     );
-    if (s.selected) {
-      const r = getReq(s.selected);
-      html +=
-        btn("Back to list", "close") +
-        '<div class="record"><small>' +
-        r.id +
-        " · Approved</small><h3>" +
-        r.event +
-        "</h3><p>" +
-        r.club +
-        " · Filed by " +
-        r.owner +
-        "</p><p><b>Return by</b> " +
-        r.due +
-        "</p><p><b>Approved equipment</b></p><ul>" +
-        r.items.map((x) => "<li>" + x + "</li>").join("") +
-        "</ul><p>" +
-        r.note +
-        "</p></div>";
-    } else
-      html += requests
-        .map((r) =>
-          row(
-            r.event,
-            r.id + " · " + r.club,
-            btn("View form", "request", r.id),
-          ),
-        )
-        .join("");
+  };
+  function requestPage() {
+    let html = head("Approved requests", "Student Activities Office · 3 approved forms");
+    if (!s.selected)
+      return html + requests.map((r) => {
+        const ls = lines(r);
+        const todo = ls.filter((x) => !x.loan).length;
+        const open = ls.filter((x) => x.loan && !x.loan.back);
+        return row(r.event,
+          r.id + " · " + r.club + " · " + (todo ? todo + " not issued" : open.length ? open.length + " still out" : "All returned"),
+          (open.some((x) => overdue(x.loan)) ? badge("Overdue", false, true) : "") + btn("View form", "request", r.id));
+      }).join("");
+    const r = getReq(s.selected), ls = lines(r);
+    html += btn("Back to list", "close") +
+      '<div class="record"><small>' + r.id + " · Approved</small><h3>" + r.event + "</h3><p>" + r.club + " · Filed by " + r.owner +
+      "</p><p><b>Return by</b> " + r.due + "</p><p>" + r.note + "</p></div><h3>Kit checklist</h3>";
+    html += ls.map(({ type, loan }) =>
+      row(type,
+        loan ? loan.asset + " · " + (loan.back ? "Returned" : "With " + holderOf(loan) + " · Due " + loan.due + (loan.expected ? " · Expected " + loan.expected : "")) : "Not issued",
+        loan && !loan.back ? loanActions(loan) : badge(loan ? "Returned" : "Not issued", !!loan))).join("");
+    if (ls.some((x) => !x.loan))
+      html += s.kit === r.id ? kitForm(r, ls) : btn("Issue kit", "kit", r.id, "primary");
     return html;
   }
   function inventory() {
@@ -285,13 +320,8 @@
       .reverse();
     if (!shown.length) html += "<p>No outstanding slips.</p>";
     for (const l of shown)
-      html += row(
-        "L-" + l.num + " · " + l.asset,
-        l.req + " · " + l.who + " · Due " + l.due,
-        l.back
-          ? badge("Returned")
-          : btn("Record return", "return", String(l.num)),
-      );
+      html += row("L-" + l.num + " · " + l.asset, loanSub(l),
+        l.back ? '<div class="stack">' + badge("Returned") + btn("Undo return", "undo", String(l.num)) + "</div>" : loanActions(l));
     return html;
   }
   function deskbook() {
@@ -319,6 +349,11 @@
       ]);
     for (const n of s.notes)
       entries.push([shifts[n.phase].time, "Counter handover", n.text]);
+    const open = s.loans.filter((l) => !l.back);
+    html +=
+      '<article class="record"><small>Still out · ' + esc(shifts[s.phase].time) + "</small><h3>Open slips</h3>" +
+      (open.length ? open.map((l) => "<p><b>" + esc(l.asset) + "</b> · " + esc(getAsset(l.asset).type) + " · " + esc(loanSub(l)) + (overdue(l) ? " · Overdue" : "") + "</p>").join("") : "<p>Nothing is out.</p>") +
+      "</article>";
     for (const [t, author, body] of entries.slice().reverse())
       html +=
         '<article class="record"><small>' +
@@ -390,12 +425,18 @@
       case "tab":
         s.tab = v;
         s.editing = false;
+        s.returning = s.custody = 0;
+        s.kit = "";
         break;
       case "close":
         s.selected = "";
+        s.returning = s.custody = 0;
+        s.kit = "";
         break;
       case "request":
         s.selected = v;
+        s.returning = s.custody = 0;
+        s.kit = "";
         break;
       case "new":
         s.editing = true;
@@ -406,11 +447,32 @@
       case "scope":
         s.onlyOpen = v === "0";
         break;
-      case "return": {
+      case "return":
+        s.returning = Number(v);
+        s.custody = 0;
+        break;
+      case "cancelreturn":
+        s.returning = 0;
+        break;
+      case "custody":
+        s.custody = Number(v);
+        s.returning = 0;
+        break;
+      case "cancelcustody":
+        s.custody = 0;
+        break;
+      case "kit":
+        s.kit = v;
+        s.returning = s.custody = 0;
+        break;
+      case "cancelkit":
+        s.kit = "";
+        break;
+      case "undo": {
         const l = s.loans.find((l) => l.num === Number(v));
-        if (!l || l.back) return;
-        l.back = true;
-        s.notice = l.asset + " returned to stock. Slip L-" + l.num + " closed.";
+        if (!l || !l.back) return;
+        l.back = false;
+        s.notice = "Return undone. Slip L-" + l.num + " is open again.";
         break;
       }
     }
@@ -431,6 +493,44 @@
       if (!text) return;
       s.notes.push({ phase: s.phase, text });
       commit("Handover note saved.");
+      return;
+    }
+    if (f.matches("[data-kit]")) {
+      const r = getReq(f.dataset.kit), who = form.get("who"), due = form.get("due");
+      if (!r || !people.includes(who) || !dues.includes(due)) return;
+      const picks = lines(r).filter((x) => !x.loan).map(({ type }) => [type, getAsset(form.get("u:" + type))]);
+      if (!picks.length || picks.some(([ty, u]) => !u || u.type !== ty || u.repair || out(u.id))) return;
+      let num = Math.max(...s.loans.map((l) => l.num));
+      for (const [, u] of picks) s.loans.push({ num: ++num, req: r.id, asset: u.id, who, due, back: false });
+      s.kit = "";
+      commit("Issued " + picks.map(([, u]) => u.id).join(", ") + " to " + who + ".");
+      return;
+    }
+    if (f.matches("[data-return]")) {
+      const l = s.loans.find((x) => x.num === Number(f.dataset.return));
+      if (!l || l.back) return;
+      const label = String(form.get("label")).trim().toUpperCase();
+      if (label === l.asset) {
+        l.back = true;
+        s.returning = 0;
+        commit(l.asset + " returned to stock. Slip L-" + l.num + " closed.");
+        return;
+      }
+      const other = getAsset(label), ol = other && out(label);
+      commit(ol ? label + " is on slip L-" + ol.num + " with " + holderOf(ol) + ". This slip is for " + l.asset + "."
+        : other ? label + " was not issued on this slip. This slip is for " + l.asset + "."
+        : "No unit labelled " + label + ". This slip is for " + l.asset + ".");
+      return;
+    }
+    if (f.matches("[data-custody]")) {
+      const l = s.loans.find((x) => x.num === Number(f.dataset.custody));
+      const holder = form.get("holder"), expected = form.get("expected");
+      if (!l || l.back || !people.includes(holder) || (expected && !dues.includes(expected))) return;
+      l.holder = holder;
+      l.expected = expected;
+      l.note = String(form.get("note")).trim();
+      s.custody = 0;
+      commit("L-" + l.num + " is now with " + holder + ".");
       return;
     }
     if (!f.matches("[data-issue]")) return;
@@ -463,7 +563,7 @@
   function restore(d) {
     if (
       !d ||
-      d.version !== 1 ||
+      d.version !== 2 ||
       !Object.hasOwn(screens, d.tab) ||
       !shifts[d.phase] ||
       (d.selected && !getReq(d.selected)) ||
@@ -491,6 +591,5 @@
   try {
     restore(JSON.parse(localStorage.getItem(storageKey)));
   } catch {
-    // Keep the fresh shift when storage is unavailable or the saved data is invalid.
   }
 })();
